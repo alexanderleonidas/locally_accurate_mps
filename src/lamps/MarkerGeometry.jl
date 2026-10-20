@@ -134,23 +134,22 @@ function dense_marker_matrix(l::Integer, k::Integer; spacing::Integer=k+1, margi
         else
             # B[j+1, jp+1] = R + 1 + rank * spacing
             # rank += 1
-            B[j+1, jp+1] = 2*l^2 + (l*j+jp -1) * spacing + margin
+            # B[j+1, jp+1] = 2*l^2 + (l*j+jp -1) * spacing + margin
+            B[j+1, jp+1] = l^2 + l + (l*j+jp -1) * spacing + margin
         end
     end
-    # N = R + (rank - 1) * spacing + 1
-    # N = B[l, l-1]
     return B
 end
 """
-    compare_packings(l::Int, k::Int)
+    compare_packings(k::Integer, ε::AbstractFloat)
 
 Prints N required by the paper's formula vs. the dense-packing candidate,
-for the same (l, k). Does not itself validate the dense packing's
+for the same (k, ε). Does not itself validate the dense packing's
 correctness — run `verify_all_purifications` on both layouts separately.
 """
-function compare_packings(l::Integer, k::Integer)
-    paper = MarkerLayout(l)
-    dense = dense_marker_layout(l, k, margin=0)
+function compare_packings(k::Integer, ε::AbstractFloat)
+    paper = MarkerLayout(k, ε)
+    dense = MarkerLayout(k, ε; which=:dense)
     println("l=$l, k=$k:")
     println("  paper's N₀  = $(paper.N)   (formula-derived spacing >= l)")
     println("  dense N₀    = $(dense.N)   (spacing = k+1 = $(k+1))")
@@ -515,7 +514,8 @@ function SharedMarkerLayout(k::Integer, ε::AbstractFloat, t::Integer; R::Union{
     rows = biclique_cover_rows(l, t)
     ok, bad = verify_separating_rows(rows, l)
     ok || throw(ErrorException("biclique_cover_rows(l=$l, t=$t) left $(length(bad)) pair(s) unseparated: $bad"))
-    Rval = R === nothing ? 2*l^2 : R
+    # Rval = R === nothing ? 2*l^2 : R
+    Rval = R === nothing ? l^2 + l : R
     markers = Marker[]
     r = 0
     for (S0, S1) in rows   # duplicate: two physical copies per row
@@ -633,7 +633,7 @@ function run_demo(; k::Integer=2, ε::AbstractFloat=0.5)
     println()
     verify_all_purifications(dense_layout)
     println()
-    # compare_packings(l, k)
+    # compare_packings(k, ε)
     # println()
 
     println("=== Load bounded marker construction (:shared) ===")

@@ -33,13 +33,13 @@ end
 
 Computes the ground state of the TFIM model using DMRG.
 """
-function tfim_ground_state(sites::Vector{<:Index}; J::Float64=1.0, h::Float64=1.0, nsweeps::Int=10, maxdim::Int=100)
+function tfim_ground_state(sites::Vector{<:Index}; J::Float64=1.0, h::Float64=1.0, nsweeps::Int=10, maxdim::Int=200)
     H = tfim_hamiltonian(sites; J=J, h=h)
     psi0 = random_mps(sites; linkdims=10)
 
     # DMRG convergence parameters
     cutoff = [1e-11]
-    maxdims = min.(maxdim, [10, 20, 50, maxdim])
+    maxdims = min.(maxdim, [10, 20, 50, 100, maxdim])
 
     energy, psi = dmrg(H, psi0; nsweeps=nsweeps, maxdim=maxdims, cutoff=cutoff, outputlevel=0)
     return energy, psi

@@ -14,7 +14,7 @@ using .MatrixProductOperators
     start_site = 2
     stop_site = 3
 
-    full_rho_mpo = outer(gs', gs)
+    # full_rho_mpo = outer(gs', gs)
     rho_mpo = reduced_density_matrix(gs, start_site, stop_site)
     rand_rho_mpo = reduced_density_matrix(rs, start_site, stop_site)
 

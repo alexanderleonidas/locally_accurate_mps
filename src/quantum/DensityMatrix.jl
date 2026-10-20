@@ -149,107 +149,168 @@ function wraparound_sites(c::Int, d::Int, N::Int)
     return d == 0 ? collect(c:N) : vcat(collect(c:N), collect(1:d))
 end
 
-"""
-    reduced_density_matrix(ψ::MPS, sites::Vector{Int}) -> MPO
+function reduced_density_matrix(target_mps::MPS, block_sites::Vector{Int}; cutoff::Float64=1e-12, maxdim::Int=64)::MPO
+    N = length(target_mps)
+    sites_set = Set(block_sites)
 
-Computes the Reduced Density Matrix (RDM) ρ_S as an MPO for an arbitrary subset of site
-indices `sites`.
+    # 1. Form full density matrix tensors site-by-site
+    T = Vector{ITensor}(undef, N)
+    for i in 1:N
+        ket = target_mps[i]
+        bra = prime(dag(ket)) # Primes both Site and Link indices
+        T[i] = ket * bra
+    end
 
-Includes a dynamic SVD compression step for interior gaps (e.g., wrap-around blocks)
-to prevent Out-Of-Memory (OOM) tensor blowups across large traced regions.
-"""
-function reduced_density_matrix(ψ::MPS, sites::Vector{Int})::MPO
-    N = length(ψ)
-    @assert !isempty(sites) "Subregion sites cannot be empty."
+    # 2. Fuse internal double-links into standard MPO single links
+    for i in 1:(N - 1)
+        l_ket = commonind(target_mps[i], target_mps[i+1])
+        l_bra = prime(l_ket)
 
-    # 1. Sort and extract unique 1-based site indices
-    s_sorted = sort(unique(sites))
-    @assert 1 <= s_sorted[1] && s_sorted[end] <= N "Site indices out of bounds (1..$N)."
+        C = combiner(l_ket, l_bra; tags="Link,l=$i")
+        T[i] *= C
+        T[i+1] *= dag(C)
+    end
 
-    S = Set(s_sorted)
-    s_min = s_sorted[1]
-    s_max = s_sorted[end]
-
-    # 2. Gauge transform MPS: set orthogonality center at s_min
-    ψ_c = orthogonalize(ψ, s_min)
-
+    # 3. Trace out non-block sites dynamically
     mpo_tensors = ITensor[]
-    E = ITensor(1.0)  # Gap environment tensor
+    E_gap = ITensor(1.0)
 
-    # 3. Iterate through chain from s_min to s_max
-    for k in s_min:s_max
-        if k in S
-            # Site k belongs to the subregion
-            A_ket = ψ_c[k]
-            A_bra = dag(prime(ψ_c[k]))  # Prime both site and link indices
-
-            T = A_ket * A_bra
-
-            # Attach compressed accumulated gap environment
-            if order(E) > 0
-                T = T * E
-                E = ITensor(1.0)
+    for i in 1:N
+        if i in sites_set
+            # Absorb any accumulated gap environment into the active block tensor
+            if norm(E_gap) != 1.0
+                T[i] = E_gap * T[i]
+                E_gap = ITensor(1.0) # Reset environment
             end
-
-            push!(mpo_tensors, T)
+            push!(mpo_tensors, T[i])
         else
-            # Site k is a marker hole or wrap-around gap (trace it out)
-            A_ket = ψ_c[k]
-            # Prime ONLY the virtual links so the physical site automatically contracts
-            A_bra = dag(prime(ψ_c[k], "Link"))
+            # Trace out physical site
+            s = siteind(target_mps, i)
+            sp = prime(s)
+            trace_op = delta(s, sp)
+            traced_T = T[i] * trace_op
 
-            gap_tensor = A_ket * A_bra
-            E = E * gap_tensor
+            # Accumulate into gap environment
+            E_gap = E_gap * traced_T
 
-            # --- CRITICAL OOM FIX: Dynamic Gap Compression ---
-            # SVD the gap tensor sequentially to prevent the transfer matrix
-            # from blowing up to an unmanageable χ^4 dense tensor.
-            if !isempty(mpo_tensors)
-                c_inds = commoninds(mpo_tensors[end], E)
-                if length(c_inds) > 0
-                    # Factorize E to truncate insignificant long-range correlations
-                    U, D, V = svd(E, c_inds...; cutoff=1e-12, maxdim=256)
-
-                    # Absorb left-side SVD into the previous MPO tensor
-                    mpo_tensors[end] = mpo_tensors[end] * (U * D)
-
-                    # The new E continues forward with a highly truncated rank
-                    E = V
-                end
+            # Dynamic SVD Compression to cap the bond dimension
+            inds_E = inds(E_gap)
+            if length(inds_E) == 2
+                U, S, V = svd(E_gap, inds_E[1]; cutoff=cutoff, maxdim=maxdim)
+                E_gap = U * S * V
             end
         end
     end
 
-    # 4. Apply exterior boundary conditions
-    if s_min > 1
-        l_left = linkind(ψ_c, s_min - 1)
-        if !isnothing(l_left)
-            mpo_tensors[1] = mpo_tensors[1] * delta(l_left, prime(l_left))
-        end
-    end
-
-    if s_max < N
-        l_right = linkind(ψ_c, s_max)
-        if !isnothing(l_right)
-            mpo_tensors[end] = mpo_tensors[end] * delta(l_right, prime(l_right))
-        end
-    end
-
-    # 5. Fuse contiguous double-links into standard MPO single links
-    # This prevents downstream `ITensorMPS.add` or `dmrg` functions from crashing
-    for i in 1:(length(mpo_tensors) - 1)
-        shared_inds = commoninds(mpo_tensors[i], mpo_tensors[i+1])
-        if length(shared_inds) > 1
-            C = combiner(shared_inds; tags="Link,l=$i")
-            mpo_tensors[i] *= C
-            mpo_tensors[i+1] *= dag(C)
-        end
+    # 4. Handle trailing gaps for wrap-around blocks
+    if norm(E_gap) != 1.0 && !isempty(mpo_tensors)
+        mpo_tensors[end] = mpo_tensors[end] * E_gap
     end
 
     return MPO(mpo_tensors)
 end
 
-# Convenience Overloads
+# """
+#     reduced_density_matrix(ψ::MPS, sites::Vector{Int}) -> MPO
+#
+# Computes the Reduced Density Matrix (RDM) ρ_S as an MPO for an arbitrary subset of site
+# indices `sites`.
+#
+# Includes a dynamic SVD compression step for interior gaps (e.g., wrap-around blocks)
+# to prevent Out-Of-Memory (OOM) tensor blowups across large traced regions.
+# """
+# function reduced_density_matrix(ψ::MPS, sites::Vector{Int})::MPO
+#     N = length(ψ)
+#     @assert !isempty(sites) "Subregion sites cannot be empty."
+#
+#     # 1. Sort and extract unique 1-based site indices
+#     s_sorted = sort(unique(sites))
+#     @assert 1 <= s_sorted[1] && s_sorted[end] <= N "Site indices out of bounds (1..$N)."
+#
+#     S = Set(s_sorted)
+#     s_min = s_sorted[1]
+#     s_max = s_sorted[end]
+#
+#     # 2. Gauge transform MPS: set orthogonality center at s_min
+#     ψ_c = orthogonalize(ψ, s_min)
+#
+#     mpo_tensors = ITensor[]
+#     E = ITensor(1.0)  # Gap environment tensor
+#
+#     # 3. Iterate through chain from s_min to s_max
+#     for k in s_min:s_max
+#         if k in S
+#             # Site k belongs to the subregion
+#             A_ket = ψ_c[k]
+#             A_bra = dag(prime(ψ_c[k]))  # Prime both site and link indices
+#
+#             T = A_ket * A_bra
+#
+#             # Attach compressed accumulated gap environment
+#             if order(E) > 0
+#                 T = T * E
+#                 E = ITensor(1.0)
+#             end
+#
+#             push!(mpo_tensors, T)
+#         else
+#             # Site k is a marker hole or wrap-around gap (trace it out)
+#             A_ket = ψ_c[k]
+#             # Prime ONLY the virtual links so the physical site automatically contracts
+#             A_bra = dag(prime(ψ_c[k], "Link"))
+#
+#             gap_tensor = A_ket * A_bra
+#             E = E * gap_tensor
+#
+#             # --- CRITICAL OOM FIX: Dynamic Gap Compression ---
+#             # SVD the gap tensor sequentially to prevent the transfer matrix
+#             # from blowing up to an unmanageable χ^4 dense tensor.
+#             if !isempty(mpo_tensors)
+#                 c_inds = commoninds(mpo_tensors[end], E)
+#                 if length(c_inds) > 0
+#                     # Factorize E to truncate insignificant long-range correlations
+#                     U, D, V = svd(E, c_inds...; cutoff=1e-12, maxdim=256)
+#
+#                     # Absorb left-side SVD into the previous MPO tensor
+#                     mpo_tensors[end] = mpo_tensors[end] * (U * D)
+#
+#                     # The new E continues forward with a highly truncated rank
+#                     E = V
+#                 end
+#             end
+#         end
+#     end
+#
+#     # 4. Apply exterior boundary conditions
+#     if s_min > 1
+#         l_left = linkind(ψ_c, s_min - 1)
+#         if !isnothing(l_left)
+#             mpo_tensors[1] = mpo_tensors[1] * delta(l_left, prime(l_left))
+#         end
+#     end
+#
+#     if s_max < N
+#         l_right = linkind(ψ_c, s_max)
+#         if !isnothing(l_right)
+#             mpo_tensors[end] = mpo_tensors[end] * delta(l_right, prime(l_right))
+#         end
+#     end
+#
+#     # 5. Fuse contiguous double-links into standard MPO single links
+#     # This prevents downstream `ITensorMPS.add` or `dmrg` functions from crashing
+#     for i in 1:(length(mpo_tensors) - 1)
+#         shared_inds = commoninds(mpo_tensors[i], mpo_tensors[i+1])
+#         if length(shared_inds) > 1
+#             C = combiner(shared_inds; tags="Link,l=$i")
+#             mpo_tensors[i] *= C
+#             mpo_tensors[i+1] *= dag(C)
+#         end
+#     end
+#
+#     return MPO(mpo_tensors)
+# end
+#
+# # Convenience Overloads
 reduced_density_matrix(ψ::MPS, sites::AbstractVector{Int}) = reduced_density_matrix(ψ, collect(sites))
 reduced_density_matrix(ψ::MPS, subregion::UnitRange{Int}) = reduced_density_matrix(ψ, collect(subregion))
 reduced_density_matrix(ψ::MPS, start_idx::Int, end_idx::Int) = reduced_density_matrix(ψ, start_idx:end_idx)

@@ -1,8 +1,10 @@
 include("../src/plotting/chain_length.jl")
 include("../src/plotting/plot_constructions.jl")
+include("../src/plotting/bond_dimension_vs_N.jl")
 
+plot_bond_dimension_vs_N()
 
-benchmark_chain_lengths_per_method(k_vals = [2, 4,6,8,10,12], ε_min = 0.9, ε_max = 0.01)
+# benchmark_chain_lengths_per_method(k_vals = [2,4,6,8,10,12], ε_min = 0.9, ε_max = 0.01)
 
 
 # Plot the scaling of ε over k for different methods (Original, Dense, Shared Reuse)

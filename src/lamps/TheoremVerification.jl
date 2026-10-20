@@ -15,7 +15,7 @@ export verify_orthogonality, debug_phi_j_construction
 """
     verify_orthogonality(k::Int, ε::AbstractFloat)
 
-Constructs the states |φ_0⟩ and |φ_1⟩ for the AKLT ground state and checks their inner product.
+Constructs the states |φ₀⟩ and |φ₁⟩ for the AKLT ground state and checks their inner product.
 """
 function verify_orthogonality(k::Integer=2, ε::AbstractFloat=0.5)
     layout = SharedMarkerLayout(k,ε, max(k,2))
@@ -26,18 +26,18 @@ function verify_orthogonality(k::Integer=2, ε::AbstractFloat=0.5)
     println("--- Generating Exact AKLT Target State ---")
     psi_target = aklt_ground_state(sites)
 
-    println("--- Constructing |φ_0⟩ ---")
+    println("--- Constructing |φ₀⟩ ---")
     sigma_0 = construct_phi_j(psi_target, layout, 0)
     phi_0   = purify_state(sigma_0, psi_target, layout, 0)
 
-    println("--- Constructing |φ_1⟩ ---")
+    println("--- Constructing |φ₁⟩ ---")
     sigma_1 = construct_phi_j(psi_target, layout, 1)
     phi_1   = purify_state(sigma_1, psi_target, layout, 1)
 
     println("--- Verifying Orthogonality ---")
     overlap = inner(phi_0, phi_1)
 
-    println("Resulting Inner Product ⟨φ_0 | φ_1⟩ = ", overlap)
+    println("Resulting Inner Product ⟨φ₀|φ₁⟩ = ", overlap)
 
     if abs(overlap) < 1e-10
         println("SUCCESS: States are perfectly orthogonal.")
@@ -56,6 +56,7 @@ Lemma 5 intermediate merges, purification sink capacity, and final MPS propertie
 function debug_phi_j_construction(target_mps::MPS, layout::AbstractMarkerLayout, j::Int; verbose::Bool=true)
     println("==========================================================")
     println(" DEBUG: Constructing |φ_j⟩ for Shift j = $j")
+    println(" k : $(layout.k), ε : $(layout.ε)")
     println(" Layout type : ", typeof(layout))
     println(" Block size l : ", layout.l)
     println(" Chain size N : ", layout.N)

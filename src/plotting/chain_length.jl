@@ -13,8 +13,8 @@ function benchmark_chain_lengths()
               xscale=:log10, yscale=:log10, legend=:topleft, framestyle=:box)
 
     for k in k_vals
-        N0_paper  = [MarkerLayout(ceil(Int, (k + 3) / eps)).N for eps in epsilons]
-        N0_dense  = [dense_marker_layout(ceil(Int, (k + 3) / eps), k, margin=0).N for eps in epsilons]
+        N0_paper  = [MarkerLayout(k, eps).N for eps in epsilons]
+        N0_dense  = [MarkerLayout(k, eps; which=:dense).N for eps in epsilons]
         N0_share = [N0_shared(k, eps).N0 for eps in epsilons]
 
         if k == 4
